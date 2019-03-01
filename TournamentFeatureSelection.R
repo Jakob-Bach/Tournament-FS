@@ -54,6 +54,9 @@ selectedFeatures <- gaResult$optVariables
 selectedFeatures <- gaResult$ga$final
 plot(gaResult) # results from outer resampling
 
+# Tournament
+selectedFeatures <- tournamentFS(dataTable = trainData, k = 5, m = 10)
+
 ##### Evaluate with xgboost classifier #####
 
 xgbTrainPredictors <- Matrix::sparse.model.matrix(~ ., data = trainData[, mget(selectedFeatures)])[, -1]
