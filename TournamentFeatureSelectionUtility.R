@@ -65,7 +65,7 @@ createXgbColMapping <- function(old, new) {
 
 # Tries all k-feature combinations on a dataset and returns the best one according
 # to MCC on a holdout set
-exhaustiveFS <- function(dataTable, k, classifier = "xgboost") {
+exhaustiveFS <- function(dataTable, k, classifier = "xgboost", subsetSelection = "max") {
   featureNames <- colnames(dataTable)[colnames(dataTable) != "target"]
   if (length(featureNames) < k) {
     return(featureNames)
@@ -128,13 +128,28 @@ exhaustiveFS <- function(dataTable, k, classifier = "xgboost") {
     }
   })
   # Determine best feature subset
-  return(featureSubsets[[which.max(classifierPerformances)]])
+  if (subsetSelection == "max") {
+    return(featureSubsets[[which.max(classifierPerformances)]])
+  } else if (subsetSelection == "mean") {
+    performancePerFeatures <- sapply(featureNames, function(featureName)
+      mean(classifierPerformances[sapply(featureSubsets, function(set) featureName %in% set)]))
+    return(names(sort(performancePerFeatures, decreasing = TRUE)[1:k]))
+  } else if (subsetSelection == "median") {
+    performancePerFeatures <- sapply(featureNames, function(featureName)
+      median(classifierPerformances[sapply(featureSubsets, function(set) featureName %in% set)]))
+    return(names(sort(performancePerFeatures, decreasing = TRUE)[1:k]))
+  } else if (subsetSelection == "none") {
+    return(list(subsets = featureSubsets, performances = classifierPerformances))
+  } else {
+    stop("Desired selection strategy not implemented in exhaustiveFS().")
+  }
 }
 
 # Searches for the best combination of k features, testing them in smaller subsets
 # of size m and selecting the k best from these, using a tournament-like aggregation
 # structure
-tournamentFS <- function(dataTable, k, m, classifier = "xgboost") {
+tournamentFS <- function(dataTable, k, m, classifier = "xgboost", subsetSelection = "max") {
+  localSelectionStrategy <- ifelse(subsetSelection == "global.mean", "none", subsetSelection)
   featureNames <- colnames(dataTable)[colnames(dataTable) != "target"]
   progresBar <- txtProgressBar(max = ceiling(length(featureNames) / m) *
                                  ceiling(1 / (1 - k / m)), style = 3)
@@ -151,10 +166,17 @@ tournamentFS <- function(dataTable, k, m, classifier = "xgboost") {
         .packages = "data.table", .export = c("createXgbColMapping", "exhaustiveFS", "mcc"),
         .options.snow = list(progress = showProgress)) %dopar% {
       return(exhaustiveFS(dataTable[,  mget(c(featureNames[featureGroupIdx == i], "target"))],
-          k = k, classifier = classifier))
+          k = k, classifier = classifier, subsetSelection = localSelectionStrategy))
     }
     parallel::stopCluster(computingCluster)
-    featureNames <- unlist(selectionResults) # flatten list
+    if (subsetSelection == "global.mean") {# create global ranking
+      performancePerFeatures <- sapply(featureNames, function(featureName) # for each feature
+        mean(unlist(lapply(selectionResults, function(resultPart) # search in all m-groups (but each feature should only occur in one m-group)
+          resultPart$performances[sapply(resultPart$subsets, function(set) featureName %in% set)])))) # search in all k-subsets
+      featureNames <- names(sort(performancePerFeatures, decreasing = TRUE)[1:(k*length(subsetIds))])
+    } else {# join local selection results
+      featureNames <- unlist(selectionResults) # flatten list
+    }
     completedSubsetCount <- completedSubsetCount + length(subsetIds)
   }
   return(featureNames)
