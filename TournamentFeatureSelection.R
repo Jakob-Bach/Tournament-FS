@@ -34,3 +34,10 @@ xgbModel <- xgboost::xgboost(data = xgboost::xgb.DMatrix(label = xgbTrainLabels,
 prediction <- predict(xgbModel, newdata = xgbTestPredictors)
 mcc(as.integer(prediction >= 0.5), xgbTestLabels)
 xgboost::xgb.ggplot.importance(xgboost::xgb.importance(model = xgbModel), top_n = 10)
+
+##### Evaluate with kNN classifier #####
+
+numericFeatures <- selectedFeatures[sapply(selectedFeatures, function(x) dataset[, is.numeric(get(x))])]
+prediction <- class::knn(train = trainData[, mget(numericFeatures)],
+    test = testData[, mget(numericFeatures)], cl = trainData$target, k = 10)
+mcc(as.integer(as.character(prediction)), testData$target)
