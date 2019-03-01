@@ -87,6 +87,19 @@ exhaustiveFS <- function(dataTable, k, classifier = "xgboost", subsetSelection =
     xgbColMapping <- createXgbColMapping(old = featureNames,
         new = colnames(xgbTrainPredictors)) # necessary because of one-hot encoding
   }
+  if (subsetSelection == "importance") {
+    if (classifier != "xgboost") {
+      stop("Importance selection only implemented for xgboost.")
+    }
+    xgbModel <- xgboost::xgboost(
+      data = xgboost::xgb.DMatrix(data = xgbTrainPredictors, label = trainData$target),
+      nrounds = 1, verbose = 0,
+      params = list(objective = "binary:logistic", nthread = 1))
+    xgbBestFeatures <- xgboost::xgb.importance(model = xgbModel)[order(-Gain)]$Feature[1:k]
+    reverseXgbColMapping <- unlist(lapply(seq_len(length(xgbColMapping)), function(i)
+      sapply(xgbColMapping[[i]], function(x) names(xgbColMapping)[i])))
+    return(unique(reverseXgbColMapping[xgbBestFeatures]))
+  }
   # Create all feature combinations of size k
   featureSubsets <- combn(featureNames, m = k, simplify = FALSE)
   # Evaluate performance of feature combinations
