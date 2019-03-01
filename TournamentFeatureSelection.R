@@ -41,3 +41,10 @@ numericFeatures <- selectedFeatures[sapply(selectedFeatures, function(x) dataset
 prediction <- class::knn(train = trainData[, mget(numericFeatures)],
     test = testData[, mget(numericFeatures)], cl = trainData$target, k = 10)
 mcc(as.integer(as.character(prediction)), testData$target)
+
+##### Evaluate with SVM classifier #####
+
+svmModel <- kernlab::ksvm(x = target ~ ., type = "C-svc",
+    data = trainData[,  mget(c(selectedFeatures, "target"))])
+prediction <- kernlab::predict(svmModel, newdata = testData, type = "response")
+mcc(prediction, testData$target)
