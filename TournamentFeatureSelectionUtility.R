@@ -28,3 +28,26 @@ mcc <- function(prediction, actual) {
   }
   return(result)
 }
+
+# Function which can be used as "summaryFunction" in caret::trainControl()
+caretMCC <- function(data, lev = NULL, model = NULL) {
+  # no calls to other (own) functions so it can also be used with caret's parallelization
+  tp <- sum(data$obs == "1" & data$pred == "1") * 1.0
+  tn <- sum(data$obs == "0" & data$pred == "0") * 1.0
+  fp <- sum(data$obs == "0" & data$pred == "1") * 1.0
+  fn <- sum(data$obs == "1" & data$pred == "0") * 1.0
+  result <- (tp*tn - fp*fn) / sqrt((tp + fp) * (tp + fn) * (tn + fp) * (tn + fn))
+  if (is.na(result)) { # just one class in actual or prediction
+    result <- 0
+  }
+  names(result) <- "MCC"
+  return(result)
+}
+
+# Features selection fitness function (for caret::gafs() and caret::safs()
+# penalizing number of features besides using MCC)
+# based on caret::caretGA$fitness_intern()
+caretPenalizedMCC <- function(object, x, y, maximize, p) {
+  perf_val <- getTrainPerf(object) # returns one-row data.frame with metrics (name prefixed with "Train")
+  return(c(PenMCC = perf_val$TrainMCC - ncol(x) / p)) # zero features -> no penalty, all features -> -1
+}
