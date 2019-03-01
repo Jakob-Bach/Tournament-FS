@@ -65,7 +65,7 @@ createXgbColMapping <- function(old, new) {
 
 # Tries all k-feature combinations on a dataset and returns the best one according
 # to MCC on a holdout set
-exhaustiveFS <- function(dataTable, k) {
+exhaustiveFS <- function(dataTable, k, classifier = "xgboost") {
   featureNames <- colnames(dataTable)[colnames(dataTable) != "target"]
   if (length(featureNames) < k) {
     return(featureNames)
@@ -81,22 +81,51 @@ exhaustiveFS <- function(dataTable, k) {
   trainClass0Idx <- sample(class0Idx, size = round(0.8 * length(class0Idx)), replace = FALSE)
   trainData <- dataTable[sort(c(trainClass0Idx, trainClass1Idx))]
   testData <- dataTable[-c(trainClass0Idx, trainClass1Idx)]
-  xgbTrainPredictors <- Matrix::sparse.model.matrix(~ ., data = trainData[, -"target"])[, -1]
-  xgbTestPredictors <- Matrix::sparse.model.matrix(~ ., data = testData[, -"target"])[, -1]
-  xgbColMapping <- createXgbColMapping(old = featureNames,
-      new = colnames(xgbTrainPredictors)) # necessary because of one-hot encoding
+  if (classifier == "xgboost" || classifier == "logReg") {
+    xgbTrainPredictors <- Matrix::sparse.model.matrix(~ ., data = trainData[, -"target"])[, -1]
+    xgbTestPredictors <- Matrix::sparse.model.matrix(~ ., data = testData[, -"target"])[, -1]
+    xgbColMapping <- createXgbColMapping(old = featureNames,
+        new = colnames(xgbTrainPredictors)) # necessary because of one-hot encoding
+  }
   # Create all feature combinations of size k
   featureSubsets <- combn(featureNames, m = k, simplify = FALSE)
   # Evaluate performance of feature combinations
   classifierPerformances <- sapply(featureSubsets, function(features) {
+    if (classifier == "xgboost") {
       xgbFeatures <- unlist(xgbColMapping[features]) # select corresponding xgb featurs
       xgbModel <- xgboost::xgboost(
         data = xgboost::xgb.DMatrix(data = xgbTrainPredictors[, xgbFeatures, drop = FALSE],
-                                    label = trainData$target),
+            label = trainData$target),
         nrounds = 1, verbose = 0,
         params = list(objective = "binary:logistic", nthread = 1))
       prediction <- predict(xgbModel, newdata = xgbTestPredictors[, xgbFeatures, drop = FALSE])
       return(mcc(as.integer(prediction >= 0.5), testData$target))
+    } else if (classifier == "kNN") {
+      numericFeatures <- features[sapply(features, function(x) trainData[, is.numeric(get(x))])]
+      prediction <- class::knn(train = trainData[, mget(numericFeatures)],
+          test = testData[, mget(numericFeatures)], cl = trainData$target, k = 10)
+      return(mcc(as.integer(as.character(prediction)), testData$target))
+    } else if (classifier == "logReg") {
+      xgbFeatures <- unlist(xgbColMapping[features])
+      logRegModel <- LiblineaR::LiblineaR(data = as.matrix(
+        xgbTrainPredictors[, xgbFeatures, drop = FALSE]), target = trainData$target, type = 0)
+      prediction <- predict(logRegModel, newx = as.matrix(
+        xgbTestPredictors[, xgbFeatures, drop = FALSE]))$predictions
+      return(mcc(prediction, testData$target))
+    } else if (classifier == "NB") {
+      nBModel <- e1071::naiveBayes(formula = target ~ .,
+          data = trainData[, mget(c(features, "target"))])
+      prediction <- predict(nBModel, newdata = testData[,  mget(c(features, "target"))],
+          type = "raw")[, 2]
+      return(mcc(as.integer(prediction >= 0.5), testData$target))
+    } else if (classifier == "SVM") {
+      svmModel <- kernlab::ksvm(x = target ~ ., type = "C-svc",
+          data = trainData[,  mget(c(features, "target"))])
+      prediction <- kernlab::predict(svmModel, newdata = testData, type = "response")
+      return(mcc(prediction, testData$target))
+    } else {
+      stop("Desired classifier not supported in exhaustiveFS().")
+    }
   })
   # Determine best feature subset
   return(featureSubsets[[which.max(classifierPerformances)]])
@@ -105,7 +134,7 @@ exhaustiveFS <- function(dataTable, k) {
 # Searches for the best combination of k features, testing them in smaller subsets
 # of size m and selecting the k best from these, using a tournament-like aggregation
 # structure
-tournamentFS <- function(dataTable, k, m) {
+tournamentFS <- function(dataTable, k, m, classifier = "xgboost") {
   featureNames <- colnames(dataTable)[colnames(dataTable) != "target"]
   progresBar <- txtProgressBar(max = ceiling(length(featureNames) / m) *
                                  ceiling(1 / (1 - k / m)), style = 3)
@@ -121,7 +150,8 @@ tournamentFS <- function(dataTable, k, m) {
     selectionResults <- foreach(i = subsetIds,
         .packages = "data.table", .export = c("createXgbColMapping", "exhaustiveFS", "mcc"),
         .options.snow = list(progress = showProgress)) %dopar% {
-      return(exhaustiveFS(dataTable[,  mget(c(featureNames[featureGroupIdx == i], "target"))], k = k))
+      return(exhaustiveFS(dataTable[,  mget(c(featureNames[featureGroupIdx == i], "target"))],
+          k = k, classifier = classifier))
     }
     parallel::stopCluster(computingCluster)
     featureNames <- unlist(selectionResults) # flatten list
