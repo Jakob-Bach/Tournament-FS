@@ -65,10 +65,11 @@ createXgbColMapping <- function(old, new) {
 
 # Tries all k-feature combinations on a dataset and returns the best one according
 # to MCC on a holdout set
-exhaustiveFS <- function(dataTable, k, classifier = "xgboost", subsetSelection = "max",
+exhaustiveFS <- function(dataTable, k = 1, classifier = "xgboost", subsetSelection = "max",
     penalty = NULL) {
   featureNames <- colnames(dataTable)[colnames(dataTable) != "target"]
-  if (length(featureNames) < k && is.null(penalty)) {
+  if (((subsetSelection %in% c("max", "mean", "median") && is.null(penalty)) ||
+       (subsetSelection == "importance.local")) && length(featureNames) <= k) {
     return(featureNames)
   }
   if (!is.integer(dataTable$target) || any(dataTable$target > 1) || any(dataTable$target < 0)) {
@@ -121,6 +122,9 @@ exhaustiveFS <- function(dataTable, k, classifier = "xgboost", subsetSelection =
     }
   }
   if (is.null(penalty)) { # Create all feature combinations of size k
+    if (length(featureNames) < k) {
+      k <- length(featureNames) # don't fully abort here, as one might still be interested in performance
+    }
     featureSubsets <- combn(featureNames, m = k, simplify = FALSE)
   } else {# Create all subsets of size 1 to m
     featureSubsets <- unlist(lapply(1:length(featureNames), function(k)
