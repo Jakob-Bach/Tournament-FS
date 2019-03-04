@@ -87,7 +87,7 @@ exhaustiveFS <- function(dataTable, k, classifier = "xgboost", subsetSelection =
     xgbColMapping <- createXgbColMapping(old = featureNames,
         new = colnames(xgbTrainPredictors)) # necessary because of one-hot encoding
   }
-  if (subsetSelection == "importance") {
+  if (startsWith(subsetSelection, "importance")) {
     if (classifier != "xgboost") {
       stop("Importance selection only implemented for xgboost.")
     }
@@ -95,10 +95,24 @@ exhaustiveFS <- function(dataTable, k, classifier = "xgboost", subsetSelection =
       data = xgboost::xgb.DMatrix(data = xgbTrainPredictors, label = trainData$target),
       nrounds = 1, verbose = 0,
       params = list(objective = "binary:logistic", nthread = 1))
-    xgbBestFeatures <- xgboost::xgb.importance(model = xgbModel)[order(-Gain)]$Feature[1:k]
     reverseXgbColMapping <- unlist(lapply(seq_len(length(xgbColMapping)), function(i)
       sapply(xgbColMapping[[i]], function(x) names(xgbColMapping)[i])))
-    return(unique(reverseXgbColMapping[xgbBestFeatures]))
+    if (subsetSelection == "importance.local") {
+      xgbBestFeatures <- xgboost::xgb.importance(model = xgbModel)[order(-Gain)]$Feature[1:k]
+      return(unique(reverseXgbColMapping[xgbBestFeatures]))
+    } else if (subsetSelection == "importance.global") { # based on xgboost::xgb.importance(), no normalization
+      xgbModelText <- xgboost::xgb.dump(model = xgbModel, with_stats = TRUE)
+      xgbModelTable <- xgboost::xgb.model.dt.tree(text = xgbModelText,
+          feature_names = xgbModel$feature_names)[Feature != "Leaf"]
+      xgbModelTable[, Feature := reverseXgbColMapping[Feature]]
+      xgbModelTable <- xgbModelTable[, .(Gain = sum(Quality)), by = Feature]
+      result <- rep(0, times = length(featureNames))
+      names(result) <- featureNames
+      result[xgbModelTable$Feature] <- xgbModelTable$Gain # unused feature not in xgbModelTable
+      return(result)
+    } else {
+      stop("Unknown importance-based selection strategy.")
+    }
   }
   # Create all feature combinations of size k
   featureSubsets <- combn(featureNames, m = k, simplify = FALSE)
@@ -186,6 +200,11 @@ tournamentFS <- function(dataTable, k, m, classifier = "xgboost", subsetSelectio
       performancePerFeatures <- sapply(featureNames, function(featureName) # for each feature
         mean(unlist(lapply(selectionResults, function(resultPart) # search in all m-groups (but each feature should only occur in one m-group)
           resultPart$performances[sapply(resultPart$subsets, function(set) featureName %in% set)])))) # search in all k-subsets
+      featureNames <- names(sort(performancePerFeatures, decreasing = TRUE)[1:(k*length(subsetIds))])
+    } else if (subsetSelection == "importance.global") {
+      performancePerFeatures <- sapply(featureNames, function(featureName) # for each feature
+        mean(unlist(lapply(selectionResults, function(resultPart) # search in all m-groups (but each feature should only occur in one m-group)
+          resultPart[names(resultPart) == featureName])))) # extract importance of particular feature (should only be 1 entry for one m-group, so mean() above not necessary)
       featureNames <- names(sort(performancePerFeatures, decreasing = TRUE)[1:(k*length(subsetIds))])
     } else {# join local selection results
       featureNames <- unlist(selectionResults) # flatten list
