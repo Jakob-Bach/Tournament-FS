@@ -88,9 +88,9 @@ exhaustiveFS <- function(dataTable, k, classifier = "xgboost", subsetSelection =
     xgbColMapping <- createXgbColMapping(old = featureNames,
         new = colnames(xgbTrainPredictors)) # necessary because of one-hot encoding
   }
-  if (startsWith(subsetSelection, "importance")) {
+  if (startsWith(subsetSelection, "importance") || subsetSelection == "model") {
     if (classifier != "xgboost") {
-      stop("Importance selection only implemented for xgboost.")
+      stop("Selection strategy only implemented for xgboost.")
     }
     xgbModel <- xgboost::xgboost(
       data = xgboost::xgb.DMatrix(data = xgbTrainPredictors, label = trainData$target),
@@ -111,6 +111,11 @@ exhaustiveFS <- function(dataTable, k, classifier = "xgboost", subsetSelection =
       names(result) <- featureNames
       result[xgbModelTable$Feature] <- xgbModelTable$Gain # unused feature not in xgbModelTable
       return(result)
+    } else if (subsetSelection == "model") {
+      xgbModelText <- xgboost::xgb.dump(model = xgbModel, with_stats = TRUE)
+      xgbModelTable <- xgboost::xgb.model.dt.tree(text = xgbModelText,
+          feature_names = xgbModel$feature_names)[Feature != "Leaf"]
+      return(as.character(reverseXgbColMapping[xgbModelTable[, unique(Feature)]])) # as.character strips names
     } else {
       stop("Unknown importance-based selection strategy.")
     }
@@ -218,7 +223,9 @@ tournamentFS <- function(dataTable, k, m, classifier = "xgboost",
           resultPart[names(resultPart) == featureName])))) # extract importance of particular feature (should only be 1 entry for one m-group, so mean() above not necessary)
       featureNames <- names(sort(performancePerFeatures, decreasing = TRUE)[1:(k*length(subsetIds))])
     } else {# join local selection results
+      oldFeatureCount <- length(featureNames)
       featureNames <- unlist(selectionResults) # flatten list
+      if (length(featureNames) == oldFeatureCount) break # strategies with variable k might get stuck
     }
     completedSubsetCount <- completedSubsetCount + length(subsetIds)
   }
